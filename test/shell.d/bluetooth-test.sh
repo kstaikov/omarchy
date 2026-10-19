@@ -165,14 +165,13 @@ cat >"$mock_bin/bluetoothctl" <<'SH'
 
 printf '%s\n' "$*" >>"$BLUETOOTHCTL_LOG"
 [[ $1 == "power" && $2 == "on" ]] && echo yes >"$POWERED_FILE"
-# Pairing bonds unless a test says it fails, and info reports the bond the way
-# bluetoothctl does.
+# The pair exit status and the bond are set apart on purpose: bluetoothctl
+# exits 1 with AlreadyExists for a device that is bonded, and a kill at the
+# timeout exits 124 whether or not the bond had landed. info reports the bond
+# the way bluetoothctl does.
 if [[ $1 == "pair" ]]; then
-  if [[ -n ${PAIR_FAILS:-} ]]; then
-    exit 1
-  else
-    echo yes >"$PAIRED_FILE"
-  fi
+  [[ ${PAIR_BONDS:-1} == "1" ]] && echo yes >"$PAIRED_FILE"
+  exit "${PAIR_EXIT:-0}"
 fi
 [[ $1 == "info" ]] && printf '\tPaired: %s\n' "$(cat "$PAIRED_FILE" 2>/dev/null || echo no)"
 [[ $1 == "list" ]] &&
@@ -286,10 +285,10 @@ pass "bluetooth connects once the adapter is up"
 # each connection is dropped as soon as the device asks for encryption, and the
 # panel then treats the trusted device as paired and never pairs it again.
 bluetooth_pair_log() {
-  rm -f "$PAIRED_FILE"
   bluetooth_run yes "$ROOT/bin/omarchy-bluetooth-device" pair AA:BB:CC:DD:EE:FF
 }
 
+rm -f "$PAIRED_FILE"
 paired_log=$(bluetooth_pair_log)
 grep -qx "trust AA:BB:CC:DD:EE:FF" "$paired_log" ||
   fail "bluetooth trusts a device once it has bonded" "$(cat "$paired_log")"
@@ -299,7 +298,8 @@ grep -qx "connect AA:BB:CC:DD:EE:FF" "$paired_log" ||
   fail "bluetooth connects a device once it has bonded" "$(cat "$paired_log")"
 pass "bluetooth connects a device once it has bonded"
 
-unpaired_log=$(PAIR_FAILS=1 bluetooth_pair_log)
+rm -f "$PAIRED_FILE"
+unpaired_log=$(PAIR_EXIT=1 PAIR_BONDS=0 bluetooth_pair_log)
 grep -qx "trust AA:BB:CC:DD:EE:FF" "$unpaired_log" &&
   fail "bluetooth does not trust a device whose pairing failed" "$(cat "$unpaired_log")"
 pass "bluetooth does not trust a device whose pairing failed"
@@ -313,6 +313,24 @@ pass "bluetooth does not connect a device whose pairing failed"
 grep -qx "untrust AA:BB:CC:DD:EE:FF" "$unpaired_log" ||
   fail "bluetooth lifts the trust of a device whose pairing failed" "$(cat "$unpaired_log")"
 pass "bluetooth lifts the trust of a device whose pairing failed"
+
+# The bond is what counts, not the pair exit status. bluetoothctl refuses to
+# pair a device that already is (AlreadyExists, exit 1), and that device still
+# gets trusted and connected.
+echo yes >"$PAIRED_FILE"
+bonded_log=$(PAIR_EXIT=1 PAIR_BONDS=0 bluetooth_pair_log)
+grep -qx "trust AA:BB:CC:DD:EE:FF" "$bonded_log" && grep -qx "connect AA:BB:CC:DD:EE:FF" "$bonded_log" ||
+  fail "bluetooth trusts and connects a bonded device even when pair exits 1" "$(cat "$bonded_log")"
+pass "bluetooth trusts and connects a bonded device even when pair exits 1"
+
+# And a pair that exits cleanly without leaving a bond is still a failed pair.
+rm -f "$PAIRED_FILE"
+unbonded_log=$(PAIR_EXIT=0 PAIR_BONDS=0 bluetooth_pair_log)
+grep -qx "trust AA:BB:CC:DD:EE:FF" "$unbonded_log" &&
+  fail "bluetooth does not trust a device that pair exited 0 on without a bond" "$(cat "$unbonded_log")"
+grep -qx "untrust AA:BB:CC:DD:EE:FF" "$unbonded_log" ||
+  fail "bluetooth untrusts a device that pair exited 0 on without a bond" "$(cat "$unbonded_log")"
+pass "bluetooth takes the bond, not the pair exit status, as the result"
 
 # Blocking hits every radio at once, so the read has to span them too. A bare
 # bluetoothctl show reports the default controller and misses a powered dongle.
