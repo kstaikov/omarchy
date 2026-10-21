@@ -56,6 +56,7 @@ const connectDevice = panelSource.match(/function connectDevice\(device\) \{[\s\
 assert(connectDevice, 'bluetooth has the connect action')
 assert(/if \(device\.paired \|\| device\.bonded\) runDeviceAction\(device, "connect"/.test(connectDevice[0]), 'bluetooth connects a bonded device')
 assert(!/trusted/.test(connectDevice[0]), 'bluetooth pairs a trusted device that never bonded instead of connecting it')
+assert(/else runDeviceAction\(device, "pair", "connecting"\)/.test(connectDevice[0]), 'bluetooth sends a device with no bond to pair')
 
 assert(bluetooth.isUuidLike('0000110b-0000-1000-8000-00805f9b34fb'), 'bluetooth detects UUID-like names')
 assert(bluetooth.isAddressLike('AA:BB:CC:DD:EE:FF'), 'bluetooth detects address-like names')
